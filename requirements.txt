@@ -1,0 +1,5 @@
+graphite-web
+django
+django-tagging
+python-memcached
+gunicorn
