@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+GRAPHITE_CACHE_ARGS=
+
+DEFAULTS=../../conf/$(basename $(pwd))-defaults.sh
+if [ -x $DEFAULTS ] ; then
+    . $DEFAULTS
+fi
+
+exec chpst -u graphite \
+    ../../bin/graphite-cache.py \
+    --debug \
+    $GUNICORN_DJANGO_ARGS

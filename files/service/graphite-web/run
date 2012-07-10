@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+GUNICORN_SETTINGS=graphite.settings
+GUNICORN_DJANGO_ARGS=
+
+DEFAULTS=../../conf/$(basename $(pwd))-defaults.sh
+if [ -x $DEFAULTS ] ; then
+    . $DEFAULTS
+fi
+
+exec chpst -u graphite \
+    ../../bin/gunicorn_django \
+    --settings=$GUNICORN_DJANGOSETTINGS \
+    $GUNICORN_DJANGO_ARGS

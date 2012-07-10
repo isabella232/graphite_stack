@@ -1,0 +1,2 @@
+#!/bin/sh
+../../bin/python ../../lib/python/site-packages/graphite/manage.py "${@}"
