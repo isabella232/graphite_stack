@@ -1,0 +1,21 @@
+archive :virtualenv, :version => '1.8.4',
+        :url => 'http://pypi.python.org/packages/source/v/virtualenv/virtualenv-1.8.4.tar.gz',
+        :checksum => 'a16ee99f4a3b72be04704b8bd28c2f21d510af545492501ca3cd50fde9a70cb6'
+
+archive :py2cairo, :version => '1.10.0',
+  :url => 'http://cairographics.org/releases/py2cairo-1.10.0.tar.bz2',
+  :checksum => 'd30439f06c2ec1a39e27464c6c828b6eface3b22ee17b2de05dc409e429a7431'
+
+GRAPHITE_URL_BASE = "https://launchpad.net/graphite/0.9/0.9.10/+download"
+
+archive :carbon, :version => '0.9.10',
+  :url => "#{GRAPHITE_URL_BASE}/carbon-0.9.10.tar.gz",
+  :checksum => '4f37e00595b5b078edb9b3f5cae318f752f4446a82623ea4da97dd7d0f6a5072'
+
+archive 'graphite-web', :version => '0.9.10',
+  :url => "#{GRAPHITE_URL_BASE}/graphite-web-0.9.10.tar.gz",
+  :checksum => '4fd1d16cac3980fddc09dbf0a72243c7ae32444903258e1b65e28428a48948be'
+
+archive :whisper, :version => '0.9.10',
+  :url => "#{GRAPHITE_URL_BASE}/whisper-0.9.10.tar.gz",
+  :checksum => '36b5fa917526224678da0a530a6f276d00074f0aa98acd6e2412c79521f9c4ff'
