@@ -1,3 +1,6 @@
+PKG_VERSION = '0.9.10'
+PKG_ITERATION = '3oc1'
+
 ### Imports & libraries
 require 'rubygems'
 require 'bundler'
@@ -8,6 +11,8 @@ require 'evoker/python'
 require 'rake/clean'
 require 'tmpdir'
 include Evoker
+
+### Package stuff
 
 ### Paths
 ROOT = File.expand_path('root')
@@ -126,4 +131,21 @@ file INSTALLED_FILE => [ :install_graphite ] + INSTALL_FILES do
   chmod 0755, Dir["root/service/**/*run"]
   chmod 0755, "root/service/graphite-web/manage"
   touch INSTALLED_FILE
+end
+
+### Postprocessing & packaging
+task :postprocess => :install do
+  chdir "root/bin" do
+    sh "sed -i~path s,#{ROOT},/opt/graphite, *"
+  end
+end
+
+task :package => :postprocess do
+  sh <<EOF
+fpm -s dir -t deb --prefix /opt/graphite -C root \\
+  --name graphite-full --version #{PKG_VERSION} --iteration #{PKG_ITERATION} \\
+  --description 'Graphite full stack' --url 'https://github.com/3ofcoins/graphite-stack/' \\
+  --license MIT --vendor 'Three of Coins' -m contact@3ofcoins.net \\
+  .
+EOF
 end
