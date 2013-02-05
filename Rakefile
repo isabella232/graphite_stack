@@ -1,151 +1,150 @@
-PKG_VERSION = '0.9.10'
-PKG_ITERATION = '3oc1'
-
-### Imports & libraries
 require 'rubygems'
 require 'bundler'
 Bundler.setup
 
-require 'evoker/fullstack'
-require 'evoker/python'
+require 'pathname'
+require 'fpm'
 require 'rake/clean'
-require 'tmpdir'
-include Evoker
 
-### Package stuff
+SRC_PKG = FPM::Package::Dir.new
+SRC_PKG.name        = 'graphite-stack'
+SRC_PKG.version     = '0.9.10'
+SRC_PKG.iteration   = '3oc1'
+SRC_PKG.description = 'Full Graphite stack'
+SRC_PKG.url         = 'https://github.com/3ofcoins/graphite-stack'
+SRC_PKG.maintainer  = 'Maciej Pasternacki <maciej@pasternacki.net>'
+SRC_PKG.provides    = %w|graphite graphite-web whisper carbon|
 
-### Paths
-ROOT = File.expand_path('root')
-BUILD_PATH = File.expand_path('build')
-CACHE_PATH = File.expand_path('cache')
-DOWNLOAD_PATH = File.expand_path('download')
+PREFIX    = Pathname.new('/opt/graphite')
+DESTDIR   = Pathname.new('root').expand_path
+VENDOR    = Pathname.new('vendor').expand_path
+BUILD     = Pathname.new('build')
+DESTROOT  = DESTDIR  + PREFIX.relative_path_from(Pathname.new('/'))
+PIP       = DESTROOT + 'bin/pip'
+PACKAGES  = DESTROOT + 'doc/packages.txt'
 
-PIP = File.join(ROOT, 'bin/pip')
-PIP_CACHE = File.expand_path(File.join(smart_const_get(:cache_path), 'pip'))
-REQUIREMENTS_LOCK = File.join(ROOT, 'lib/python/requirements.txt.lock')
-INSTALL_FILES = Dir['files/**/*[^~]'].select { |p| File.file?(p) }.sort
-INSTALLED_FILE = File.join(ROOT, INSTALL_FILES.first.sub(/^files./, ''))
+DEB_PKG = SRC_PKG.convert(FPM::Package::Deb)
+SRC_PKG.attributes[:chdir]     = DESTDIR.to_s
+DEB_PKG.attributes[:deb_user]  = 'root'
+DEB_PKG.attributes[:deb_group] = 'root'
 
-### Download URLs
-VIRTUALENV_URL = 'https://raw.github.com/pypa/virtualenv/master/virtualenv.py'
-PY2CAIRO_URL = 'http://cairographics.org/releases/py2cairo-1.10.0.tar.bz2'
-GRAPHITE_URL_BASE = "https://launchpad.net/graphite/0.9/0.9.10/+download"
-CARBON_URL = "#{GRAPHITE_URL_BASE}/carbon-0.9.10.tar.gz"
-GRAPHITE_WEB_URL = "#{GRAPHITE_URL_BASE}/graphite-web-0.9.10.tar.gz"
-WHISPER_URL = "#{GRAPHITE_URL_BASE}/whisper-0.9.10.tar.gz"
-
-### Configuration
 if RUBY_PLATFORM.downcase.include?('darwin')
   system('which llvm-gcc >/dev/null 2>&1')
   ENV['CC'] = 'llvm-gcc' if $?.exitstatus.zero?
   ENV['ARCHFLAGS'] = '-arch x86_64'
 end
 
-### Cleanup
-CLEAN << DOWNLOAD_PATH
-CLEAN << BUILD_PATH
-CLOBBER << ROOT
-CLOBBER << CACHE_PATH
+CLEAN << DESTDIR
+CLEAN << BUILD
+CLEAN << DEB_PKG.to_s
 
-### Helper functions
-def installed(path)
-  File.join(ROOT, path)
-end
-
-def pip_install(what)
-  sh "#{PIP} install --download-cache=#{PIP_CACHE} --use-mirrors #{what}"
-end
-
-### Directories
-mkdir_p ROOT unless Dir.exists?(ROOT)
-mkdir_p PIP_CACHE unless Dir.exists?(PIP_CACHE)
-
-Dir['pieces/*.rake'].each { |piece| load piece }
-
-### High-level tasks
-task :install_graphite => [ REQUIREMENTS_LOCK, :carbon, :graphite_web, :whisper ]
-task :install => [ :install_graphite, INSTALLED_FILE  ]
-task :default => [ :install ]
-
-### Actual build
-file PIP => download(VIRTUALENV_URL) do
-  virtualenv_py = File.expand_path(dl('virtualenv.py'))
-  chdir 'download' do
-    # virtualenv leaves distribute tarball in current directory
-    sh "#{smart_const_get(:python)} #{virtualenv_py} --distribute #{ROOT}"
-  end
-  rm_f File.join(ROOT, 'lib/python')
-  ln_s File.basename(Dir[File.join(ROOT, 'lib/python*')].first), File.join(ROOT, 'lib/python')
-end
-
-file REQUIREMENTS_LOCK  => [ PIP, 'requirements.txt', :carbon ] do |t|
-  sh "#{PIP} install --download-cache=cache/pip --use-mirrors -r requirements.txt"
-  sh "#{PIP} freeze > #{t}"
-end
-
-from_tarball :py2cairo, PY2CAIRO_URL do
-  file installed('lib/python/site-packages/cairo/__init__.py') => PIP do |t|
-    chdir source_dir do
-      touch .
-      sh <<EOF
-        export PYTHONPATH=#{ROOT} PATH=#{ROOT}/bin:$PATH \\
-               LD_LIBRARY_PATH=#{ROOT}:#{ROOT}/lib:$LD_LIBRARY_PATH
-        python ./waf clean
-        python ./waf configure --libdir=#{ROOT}/lib
-        python ./waf build
-        python ./waf install
-EOF
+class Pathname
+  def [](*globs)
+    globs.inject([]) do |acc, glob|
+      acc + self.class.glob(self + glob)
     end
-    touch t.to_s
   end
 end
 
-from_tarball :carbon, CARBON_URL do
-  file installed('bin/carbon-aggregator.py') => [ PIP ] do |t|
-    touch source_dir
-    rm_f source_file('setup.cfg')
-    pip_install source_dir
-    touch t.to_s
+file PIP do
+  python     = ENV['PYTHON'] || 'python'
+  virtualenv = "#{python} vendor/virtualenv/virtualenv.py"
+  sh "#{virtualenv} --distribute --verbose --never-download #{DESTROOT}"
+  ln_sf DESTROOT['lib/python?*'].first.basename,
+        DESTROOT.join('lib/python')
+end
+
+desc "Prepare install/build environment"
+task :prepare => PIP
+
+file PACKAGES => PIP do
+  mkdir_p BUILD
+  cp_r VENDOR['carbon', 'graphite-web', 'whisper', 'py2cairo'],
+       BUILD, :remove_destination => true
+
+  cmd = "#{PIP} install"
+  if ENV['UNFROZEN']
+    cmd << " -r requirements.txt"
+  else
+    cmd <<
+      " --no-index -f file://#{VENDOR+'pip'} -r #{VENDOR+'requirements.txt'}"
+  end
+
+  sh "#{cmd} #{BUILD.join('carbon')} #{BUILD.join('graphite-web')} #{BUILD.join('whisper')}"
+
+  chdir BUILD + 'py2cairo' do
+    sh <<-EOF
+      . #{DESTROOT}/bin/activate ;
+      python ./waf configure --prefix=#{PREFIX} &&
+      python ./waf build &&
+      python ./waf install --destdir=#{DESTDIR}
+    EOF
+  end
+
+  mkdir_p PACKAGES.dirname
+  sh "#{PIP} freeze > #{PACKAGES}"
+end
+
+desc "Install Graphite with dependencies to local root"
+task :install_software => PACKAGES
+
+desc "Install supporting files to local root"
+task :install_files => PIP do
+  cp_r "files/.", DESTROOT
+  chmod 0755, DESTROOT['service/**/*run', 'service/graphite-web/manage']
+end
+
+desc "Postprocess installed software for packaging"
+task :postprocess => :install_software do
+  chdir DESTROOT + 'bin' do
+    sh   "sed -i~path s,#{DESTDIR},/, *"
+    rm_f Dir["*~path"]
   end
 end
 
-from_tarball :graphite_web, GRAPHITE_WEB_URL do
-  file installed('lib/python/site-packages/graphite/settings.py') => [ PIP ] do |t|
-    touch source_dir
-    rm_f source_file('setup.cfg')
-    pip_install source_dir
-    touch t.to_s
+desc "Install all to local root"
+task :install => [:install_software, :install_files]
+
+desc "Package file"
+file DEB_PKG.to_s => [:install, :postprocess] do
+  SRC_PKG.input '.'
+  DEB_PKG.output(DEB_PKG.to_s)
+end
+
+desc "Build the package"
+task :package => DEB_PKG.to_s
+
+task :default => :package
+
+task :pry do
+  require 'pry'
+  binding.pry
+end
+
+# Updating precise requirement list
+task :unfreeze do
+  ENV['UNFROZEN'] = '1'
+end
+
+desc "Freeze currently vendored pip requirements"
+task :freeze do
+  sh 'git rm vendor/requirements.txt vendor/pip/*'
+  Rake::Task[:install_software].invoke
+  File.open 'vendor/requirements.txt', 'w' do |f|
+    f.write `#{PIP} freeze`.
+      lines.
+      grep(/^(?!(?:carbon|whisper|graphite-web)==)/).
+      join
   end
-end
-
-from_tarball :whisper, WHISPER_URL do
-  file installed('lib/python/site-packages/whisper.py') => [ PIP ] do |t|
-    touch source_dir
-    pip_install source_dir
-    touch t.to_s
-  end
-end
-
-file INSTALLED_FILE => [ :install_graphite ] + INSTALL_FILES do
-  cp_r "files/.", "root"
-  chmod 0755, Dir["root/service/**/*run"]
-  chmod 0755, "root/service/graphite-web/manage"
-  touch INSTALLED_FILE
-end
-
-### Postprocessing & packaging
-task :postprocess => :install do
-  chdir "root/bin" do
-    sh "sed -i~path s,#{ROOT},/opt/graphite, *"
-  end
-end
-
-task :package => :postprocess do
-  sh <<EOF
-fpm -s dir -t deb --prefix /opt/graphite -C root \\
-  --name graphite-full --version #{PKG_VERSION} --iteration #{PKG_ITERATION} \\
-  --description 'Graphite full stack' --url 'https://github.com/3ofcoins/graphite-stack/' \\
-  --license MIT --vendor 'Three of Coins' -m contact@3ofcoins.net \\
-  .
+  mkdir_p VENDOR+'pip'
+  sh "#{PIP} install -r vendor/requirements.txt --download vendor/pip"
+  sh 'git add vendor/requirements.txt vendor/pip/*'
+  puts <<EOF
+***
+*** All changes are staged in git. Review and commit or revert.
+***
 EOF
 end
+
+desc "Install software from pip and update vendored cache"
+task :refreeze => [ :clean, :unfreeze, :install_software, :freeze ]
