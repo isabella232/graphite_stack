@@ -7,26 +7,35 @@ require 'fpm'
 require 'rake/clean'
 
 SRC_PKG = FPM::Package::Dir.new
-SRC_PKG.name        = 'graphite-stack'
-SRC_PKG.version     = '0.9.10'
-SRC_PKG.iteration   = '3oc1'
-SRC_PKG.description = 'Full Graphite stack'
-SRC_PKG.url         = 'https://github.com/3ofcoins/graphite-stack'
-SRC_PKG.maintainer  = 'Maciej Pasternacki <maciej@pasternacki.net>'
-SRC_PKG.provides    = %w|graphite graphite-web whisper carbon|
+SRC_PKG.name         = 'graphite-stack'
+SRC_PKG.version      = '0.9.10'
+SRC_PKG.iteration    = '3oc1'
+SRC_PKG.description  = 'Full Graphite stack'
+SRC_PKG.url          = 'https://github.com/3ofcoins/graphite-stack'
+SRC_PKG.maintainer   = 'Maciej Pasternacki <maciej@pasternacki.net>'
+SRC_PKG.provides     = %w|graphite graphite-web whisper carbon|
+SRC_PKG.dependencies = %w|runit|
 
 PREFIX    = Pathname.new('/opt/graphite')
-DESTDIR   = Pathname.new('root').expand_path
+DESTDIR   = Pathname.new(ENV['DESTDIR'] || 'root').expand_path
 VENDOR    = Pathname.new('vendor').expand_path
-BUILD     = Pathname.new('build')
+SCRIPT    = Pathname.new('script').expand_path
+BUILD     = Pathname.new('build').expand_path
 DESTROOT  = DESTDIR  + PREFIX.relative_path_from(Pathname.new('/'))
 PIP       = DESTROOT + 'bin/pip'
-PACKAGES  = DESTROOT + 'doc/packages.txt'
+DOC       = DESTROOT + 'doc'
+PACKAGES  = DOC + 'packages.txt'
+
+SRC_PKG.scripts[:before_install] = SCRIPT+'before-install.sh'
+SRC_PKG.scripts[:after_install]  = SCRIPT+'after-install.sh'
+SRC_PKG.attributes[:chdir]       = DESTDIR.to_s
+SRC_PKG.attributes[:deb_user]    = 'root'
+SRC_PKG.attributes[:deb_group]   = 'root'
+SRC_PKG.config_files             =
+  %w(carbon.conf storage-schemas.conf custom_settings.py).
+  map { |f| DESTROOT + 'conf' + f }
 
 DEB_PKG = SRC_PKG.convert(FPM::Package::Deb)
-SRC_PKG.attributes[:chdir]     = DESTDIR.to_s
-DEB_PKG.attributes[:deb_user]  = 'root'
-DEB_PKG.attributes[:deb_group] = 'root'
 
 if RUBY_PLATFORM.downcase.include?('darwin')
   system('which llvm-gcc >/dev/null 2>&1')
@@ -57,7 +66,7 @@ end
 desc "Prepare install/build environment"
 task :prepare => PIP
 
-file PACKAGES => PIP do
+file DOC+'packages.txt' => PIP do
   mkdir_p BUILD
   cp_r VENDOR['carbon', 'graphite-web', 'whisper', 'py2cairo'],
        BUILD, :remove_destination => true
@@ -81,12 +90,20 @@ file PACKAGES => PIP do
     EOF
   end
 
-  mkdir_p PACKAGES.dirname
-  sh "#{PIP} freeze > #{PACKAGES}"
+  rm_rf DESTROOT+'local'
+
+  %w(carbon storage-schemas).each do |cf|
+    cp DESTROOT+"conf/#{cf}.conf.example", DESTROOT+"conf/#{cf}.conf"
+  end
+
+  mkdir_p DOC+'conf'
+  mv DESTROOT+'examples', DOC
+  mv (DESTROOT+'conf')['*.example'], DOC+'conf'
+  sh "#{PIP} freeze > #{DOC+'packages.txt'}"
 end
 
 desc "Install Graphite with dependencies to local root"
-task :install_software => PACKAGES
+task :install_software => DOC+'packages.txt'
 
 desc "Install supporting files to local root"
 task :install_files => PIP do
@@ -100,6 +117,7 @@ task :postprocess => :install_software do
     sh   "sed -i~path s,#{DESTDIR},/, *"
     rm_f Dir["*~path"]
   end
+  rm_rf DESTROOT + 'storage'
 end
 
 desc "Install all to local root"
@@ -108,6 +126,7 @@ task :install => [:install_software, :install_files]
 desc "Package file"
 file DEB_PKG.to_s => [:install, :postprocess] do
   SRC_PKG.input '.'
+  puts "Writing #{DEB_PKG}"
   DEB_PKG.output(DEB_PKG.to_s)
 end
 
