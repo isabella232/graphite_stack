@@ -5,3 +5,4 @@ download
 root
 .vagrant
 *.deb
+/debian
