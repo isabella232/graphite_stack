@@ -1,8 +1,6 @@
 *~
-build
-cache
-download
-root
-.vagrant
-*.deb
+/build
+/root
+/.vagrant
+/*.deb
 /debian
