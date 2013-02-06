@@ -9,6 +9,6 @@ if [ -x $DEFAULTS ] ; then
 fi
 
 exec chpst -u graphite \
-    ../../bin/graphite-cache.py \
-    --debug \
-    $GUNICORN_DJANGO_ARGS
+    ../../bin/carbon-cache.py \
+    --debug $GRAPHITE_CACHE_ARGS \
+    start

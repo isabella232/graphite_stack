@@ -11,5 +11,5 @@ fi
 
 exec chpst -u graphite \
     ../../bin/gunicorn_django \
-    --settings=$GUNICORN_DJANGOSETTINGS \
+    --settings=$GUNICORN_SETTINGS \
     $GUNICORN_DJANGO_ARGS

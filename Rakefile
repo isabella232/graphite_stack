@@ -3,30 +3,41 @@ require 'bundler'
 Bundler.setup
 
 require 'pathname'
+
 require 'fpm'
+require 'mixlib/shellout'
 require 'rake/clean'
 
 SRC_PKG = FPM::Package::Dir.new
-SRC_PKG.name        = 'graphite-stack'
-SRC_PKG.version     = '0.9.10'
-SRC_PKG.iteration   = '3oc1'
-SRC_PKG.description = 'Full Graphite stack'
-SRC_PKG.url         = 'https://github.com/3ofcoins/graphite-stack'
-SRC_PKG.maintainer  = 'Maciej Pasternacki <maciej@pasternacki.net>'
-SRC_PKG.provides    = %w|graphite graphite-web whisper carbon|
+SRC_PKG.name         = 'graphite-stack'
+SRC_PKG.version      = '0.9.10'
+SRC_PKG.iteration    = '3oc1'
+SRC_PKG.description  = 'Full Graphite stack'
+SRC_PKG.url          = 'https://github.com/3ofcoins/graphite-stack'
+SRC_PKG.maintainer   = 'Maciej Pasternacki <maciej@pasternacki.net>'
+SRC_PKG.provides     = %w|graphite graphite-web whisper carbon|
+SRC_PKG.dependencies = %w|runit|
 
 PREFIX    = Pathname.new('/opt/graphite')
-DESTDIR   = Pathname.new('root').expand_path
+DESTDIR   = Pathname.new(ENV['DESTDIR'] || 'root').expand_path
 VENDOR    = Pathname.new('vendor').expand_path
-BUILD     = Pathname.new('build')
+SCRIPT    = Pathname.new('script').expand_path
+BUILD     = Pathname.new('build').expand_path
 DESTROOT  = DESTDIR  + PREFIX.relative_path_from(Pathname.new('/'))
 PIP       = DESTROOT + 'bin/pip'
-PACKAGES  = DESTROOT + 'doc/packages.txt'
+DOC       = DESTROOT + 'doc'
+PACKAGES  = DOC + 'packages.txt'
+
+SRC_PKG.scripts[:before_install] = (SCRIPT+'before-install.sh').read
+SRC_PKG.scripts[:after_install]  = (SCRIPT+'after-install.sh').read
+SRC_PKG.attributes[:chdir]       = DESTDIR.to_s
+SRC_PKG.attributes[:deb_user]    = 'root'
+SRC_PKG.attributes[:deb_group]   = 'root'
+SRC_PKG.config_files             =
+  %w(carbon.conf storage-schemas.conf custom_settings.py).
+  map { |f| DESTROOT + 'conf' + f }
 
 DEB_PKG = SRC_PKG.convert(FPM::Package::Deb)
-SRC_PKG.attributes[:chdir]     = DESTDIR.to_s
-DEB_PKG.attributes[:deb_user]  = 'root'
-DEB_PKG.attributes[:deb_group] = 'root'
 
 if RUBY_PLATFORM.downcase.include?('darwin')
   system('which llvm-gcc >/dev/null 2>&1')
@@ -34,9 +45,33 @@ if RUBY_PLATFORM.downcase.include?('darwin')
   ENV['ARCHFLAGS'] = '-arch x86_64'
 end
 
+def _python_full_path
+  if ( py = Pathname.new(ENV['PYTHON'] || 'python') ).absolute?
+    py
+  else
+    ENV['PATH'].
+      split(':').
+      map { |e| Pathname.new(e)+py }.
+      find(&:executable?)
+  end.realpath
+end
+
+def python
+  $python_full_path ||= _python_full_path
+end
+
+def shellout(*command)
+  command = command.map(&:to_s)
+  puts "+ #{command.join(' ')}"
+  cmd = Mixlib::ShellOut.new(*command)
+  cmd.run_command.error!
+  cmd
+end
+
 CLEAN << DESTDIR
 CLEAN << BUILD
 CLEAN << DEB_PKG.to_s
+CLEAN << 'debian'
 
 class Pathname
   def [](*globs)
@@ -47,9 +82,7 @@ class Pathname
 end
 
 file PIP do
-  python     = ENV['PYTHON'] || 'python'
-  virtualenv = "#{python} vendor/virtualenv/virtualenv.py"
-  sh "#{virtualenv} --distribute --verbose --never-download #{DESTROOT}"
+  sh "#{python} #{VENDOR+'virtualenv/virtualenv.py'} --distribute --verbose --never-download #{DESTROOT}"
   ln_sf DESTROOT['lib/python?*'].first.basename,
         DESTROOT.join('lib/python')
 end
@@ -57,7 +90,7 @@ end
 desc "Prepare install/build environment"
 task :prepare => PIP
 
-file PACKAGES => PIP do
+file DOC+'packages.txt' => PIP do
   mkdir_p BUILD
   cp_r VENDOR['carbon', 'graphite-web', 'whisper', 'py2cairo'],
        BUILD, :remove_destination => true
@@ -81,12 +114,20 @@ file PACKAGES => PIP do
     EOF
   end
 
-  mkdir_p PACKAGES.dirname
-  sh "#{PIP} freeze > #{PACKAGES}"
+  rm_rf DESTROOT+'local'
+
+  %w(carbon storage-schemas).each do |cf|
+    cp DESTROOT+"conf/#{cf}.conf.example", DESTROOT+"conf/#{cf}.conf"
+  end
+
+  mkdir_p DOC+'conf'
+  mv DESTROOT+'examples', DOC
+  mv (DESTROOT+'conf')['*.example'], DOC+'conf'
+  sh "#{PIP} freeze > #{DOC+'packages.txt'}"
 end
 
 desc "Install Graphite with dependencies to local root"
-task :install_software => PACKAGES
+task :install_software => DOC+'packages.txt'
 
 desc "Install supporting files to local root"
 task :install_files => PIP do
@@ -97,17 +138,48 @@ end
 desc "Postprocess installed software for packaging"
 task :postprocess => :install_software do
   chdir DESTROOT + 'bin' do
-    sh   "sed -i~path s,#{DESTDIR},/, *"
+    sh   "sed -i~path s,#{DESTDIR}/,/, *"
     rm_f Dir["*~path"]
   end
+  rm_rf DESTROOT + 'storage'
 end
 
 desc "Install all to local root"
 task :install => [:install_software, :install_files]
 
+# Dummy debian/ directory for dpkg-shlibdeps
+file 'debian/changelog' do
+  rm_rf 'debian'
+  mkdir_p 'debian'
+
+  File.write 'debian/changelog', <<EOF
+#{SRC_PKG.name} (#{SRC_PKG.version}) UNRELEASED; urgency=low
+
+  * dummy
+
+ -- dummy <dummy@localhost>  #{DateTime.now.rfc2822}
+EOF
+  touch 'debian/control'
+end
+
 desc "Package file"
-file DEB_PKG.to_s => [:install, :postprocess] do
+file DEB_PKG.to_s => [:install, :postprocess, 'debian/changelog'] do
+  ## Figure out the dependencies
+  DEB_PKG.dependencies |= [ shellout("dpkg -S #{python}").
+    stdout.split(':').first ]
+
+  binaries =
+    shellout("file", *DESTROOT['bin/*']).stdout.lines.
+    grep(/executable.*dynamically linked/).
+    map { |ln| ln.strip.split(':').first }
+  DESTROOT.find { |pn| binaries << pn if pn.extname == '.so' }
+
+  shlibdeps = shellout('dpkg-shlibdeps', '-O', *binaries).
+    stdout.strip.sub(/^shlibs:Depends=/,'').split(/,\s*/)
+  DEB_PKG.dependencies |= shlibdeps
+
   SRC_PKG.input '.'
+  puts "Writing #{DEB_PKG}"
   DEB_PKG.output(DEB_PKG.to_s)
 end
 
