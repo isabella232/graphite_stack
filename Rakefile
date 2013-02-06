@@ -114,7 +114,7 @@ end
 desc "Postprocess installed software for packaging"
 task :postprocess => :install_software do
   chdir DESTROOT + 'bin' do
-    sh   "sed -i~path s,#{DESTDIR},/, *"
+    sh   "sed -i~path s,#{DESTDIR}/,/, *"
     rm_f Dir["*~path"]
   end
   rm_rf DESTROOT + 'storage'
