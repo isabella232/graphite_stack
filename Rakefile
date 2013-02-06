@@ -26,8 +26,8 @@ PIP       = DESTROOT + 'bin/pip'
 DOC       = DESTROOT + 'doc'
 PACKAGES  = DOC + 'packages.txt'
 
-SRC_PKG.scripts[:before_install] = SCRIPT+'before-install.sh'
-SRC_PKG.scripts[:after_install]  = SCRIPT+'after-install.sh'
+SRC_PKG.scripts[:before_install] = (SCRIPT+'before-install.sh').read
+SRC_PKG.scripts[:after_install]  = (SCRIPT+'after-install.sh').read
 SRC_PKG.attributes[:chdir]       = DESTDIR.to_s
 SRC_PKG.attributes[:deb_user]    = 'root'
 SRC_PKG.attributes[:deb_group]   = 'root'
